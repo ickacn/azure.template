@@ -1,0 +1,756 @@
+{
+  "$schema": "http://schemas.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "type": "string",
+      "metadata": {
+        "description": "The name of the function app that you wish to create."
+      }
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('storageAccountName')]",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "accountType": "Standard_LRS"
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2015-04-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "name": "[variables('hostingPlanName')]",
+        "computeMode": "Dynamic",
+        "sku": "Dynamic"
+      }
+    },
+    {
+      "apiVersion": "2015-04-01",
+      "type": "Microsoft.Web/sites",
+      "name": "[variables('functionAppName')]",
+      "location": "[resourceGroup().location]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "kind": "functionapp",
+      "properties": {
+        "name": "[variables('functionAppName')]",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "hostingEnvironment": "",
+        "clientAffinityEnabled": false,
+        "siteConfig": {
+          "appSettings": [
+            {
+              "name": "AzureWebJobsDashboard",
+              "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountid'),'2015-05-01-preview').key1)]"
+            },
+            {
+              "name": "AzureWebJobsStorage",
+              "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountid'),'2015-05-01-preview').key1)]"
+            },
+            {
+              "name": "WEBSITE_CONTENTAZUREFILECONNECTIONSTRING",
+              "value": "[concat('DefaultEndpointsProtocol=https;AccountName=', variables('storageAccountName'), ';AccountKey=', listKeys(variables('storageAccountid'),'2015-05-01-preview').key1)]"
+            },
+            {
+              "name": "WEBSITE_CONTENTSHARE",
+              "value": "[toLower(variables('functionAppName'))]"
+            },
+            {
+              "name": "FUNCTIONS_EXTENSION_VERSION",
+              "value": "~2"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "resources": [
+        {
+          "apiVersion": "2015-08-01",
+          "name": "web",
+          "type": "sourcecontrols",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/Sites', variables('functionAppName'))]"
+          ],
+          "properties": {
+            "RepoUrl": "[variables('repoURL')]",
+            "branch": "[variables('branch')]",
+            "IsManualIntegration": true
+          }
+        }
+      ]
+    },
+    {
+      "comments": "Logic App for Start Vm's",
+      "type": "Microsoft.Logic/workflows",
+      "name": "[variables('startVMslogicAppName')]",
+      "apiVersion": "2017-07-01",
+      "location": "[resourceGroup().location]",
+      "tags": {},
+      "scale": null,
+      "properties": {
+        "state": "Disabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "actions": {          
+            "Send_an_email": {
+              "inputs": {
+                "body": {
+                  "Body": "@body('Parse_JSON')?['output']",
+                  "Subject": "Started VMs",
+                  "To": "somebody@example.com"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['office365']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/Mail"
+              },
+              "runAfter": {
+                "Parse_JSON": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ApiConnection"
+            },
+            "Enter_Batch_Size_(Optional)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "Batch Size",
+                    "type": "String",
+                    "value": "10"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_Tags_to_Check_(Optional)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "Enter_Resource_Group_Name_(Optional)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "resourceGroupName",
+                    "type": "String",
+                    "value": "[resourceGroup().name]"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_SubscriptionId_(Required)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "Enter_SubscriptionId_(Required)": {
+              "description": "Subscription Id of the subscription you want to manage",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "subscriptionId",
+                    "type": "String",
+                    "value": "[subscription().subscriptionId]"
+                  }
+                ]
+              },
+              "runAfter": {},
+              "type": "InitializeVariable"
+            },
+            "Enter_Tags_to_Check_(Optional)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "Tags To Check",
+                    "type": "String",
+                    "value": ""
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_Resource_Group_Name_(Optional)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "Function_Body_(Do_not_edit)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "Function Body",
+                    "type": "String",
+                    "value": "{\"mode\":\"start\", \"subscriptionId\":\"@{variables('subscriptionId')}\",\"batchsize\":\"@{variables('Batch Size')}\"}"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_Batch_Size_(Optional)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "ResourceGroup_condition": {
+              "actions": {},
+              "else": {
+                "actions": {
+                  "Condition_3": {
+                    "actions": {
+                      "Set_variable_3": {
+                        "inputs": {
+                          "name": "Function Body",
+                          "value": "{\"mode\":\"start\", \"subscriptionId\":\"@{variables('subscriptionId')}\", \"resourceGroupName\":\"@{variables('resourceGroupName')}\", \"batchsize\":\"@{variables('Batch Size')}\"}"
+                        },
+                        "runAfter": {},
+                        "type": "SetVariable"
+                      }
+                    },
+                    "else": {
+                      "actions": {
+                        "Set_variable_4": {
+                          "inputs": {
+                            "name": "Function Body",
+                            "value": "{\"mode\":\"start\", \"subscriptionId\":\"@{variables('subscriptionId')}\", \"resourceGroupName\":\"@{variables('resourceGroupName')}\", \"tag\":\"@{variables('Tags To Check')}\", \"batchsize\":\"@{variables('Batch Size')}\"}"
+                          },
+                          "runAfter": {},
+                          "type": "SetVariable"
+                        }
+                      }
+                    },
+                    "expression": {
+                      "and": [
+                        {
+                          "equals": [
+                            "@variables('Tags To Check')",
+                            ""
+                          ]
+                        }
+                      ]
+                    },
+                    "runAfter": {},
+                    "type": "If"
+                  }
+                }
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@variables('resourceGroupName')",
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "Function_Body_(Do_not_edit)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If"
+            },
+            "StartStopVMs": {
+              "inputs": {
+                "body": "@variables('Function Body')",
+                "function": {
+                  "id": "[resourceId('Microsoft.Web/sites/functions', variables('functionAppName'),variables('functionName'))]"
+                }
+              },
+              "runAfter": {
+                "Tags_Condition": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Function"
+            },
+            "Parse_JSON": {
+              "inputs": {
+                "content": "@body('StartStopVMs')",
+                "schema": {
+                  "properties": {
+                    "createdTime": {
+                      "type": "string"
+                    },
+                    "customStatus": {},
+                    "input": {
+                      "type": "string"
+                    },
+                    "instanceId": {
+                      "type": "string"
+                    },
+                    "lastUpdatedTime": {
+                      "type": "string"
+                    },
+                    "output": {
+                      "type": "string"
+                    },
+                    "runtimeStatus": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "runAfter": {
+                "StartStopVMs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ParseJson"
+            },
+            "Tags_Condition": {
+              "actions": {},
+              "else": {
+                "actions": {
+                  "Condition_4": {
+                    "actions": {
+                      "Set_variable": {
+                        "inputs": {
+                          "name": "Function Body",
+                          "value": "{\"mode\":\"start\", \"subscriptionId\":\"@{variables('subscriptionId')}\", \"tag\":\"@{variables('Tags To Check')}\", \"batchsize\":\"@{variables('Batch Size')}\"}"
+                        },
+                        "runAfter": {},
+                        "type": "SetVariable"
+                      }
+                    },
+                    "expression": {
+                      "and": [
+                        {
+                          "equals": [
+                            "@variables('resourceGroupName')",
+                            ""
+                          ]
+                        }
+                      ]
+                    },
+                    "runAfter": {},
+                    "type": "If"
+                  }
+                }
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@variables('Tags To Check')",
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "ResourceGroup_condition": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If"
+            }
+          },
+          "contentVersion": "1.0.0.0",
+          "outputs": {},
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Schedule_of_when_you_want_the_VM's_to_be_started_(Required)": {
+              "recurrence": {
+                "frequency": "Day",
+                "interval": 1,
+                "schedule": {
+                  "hours": [
+                    "7"
+                  ],
+                  "minutes": [
+                    0
+                  ]
+                },
+                "startTime": "2018-12-04T15:00:00",
+                "timeZone": "Pacific Standard Time"
+              },
+              "type": "Recurrence"
+            }
+          }
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "office365": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/', 'office365')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('office365ConnectionName'))]",
+                "connectionName": "[variables('office365ConnectionName')]"
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites/sourcecontrols', variables('functionAppName'), 'web')]",
+        "[resourceId('Microsoft.Web/connections', variables('office365ConnectionName'))]"
+      ]
+    },
+    {
+      "comments": "Logic App for Stop Vm's",
+      "type": "Microsoft.Logic/workflows",
+      "name": "[variables('stopVMslogicAppName')]",
+      "apiVersion": "2017-07-01",
+      "location": "[resourceGroup().location]",
+      "tags": {},
+      "scale": null,
+      "properties": {
+        "state": "Disabled",
+        "definition": {
+          "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+          "actions": {          
+            "Send_an_email": {
+              "inputs": {
+                "body": {
+                  "Body": "@body('Parse_JSON')?['output']",
+                  "Subject": "Stopped VMs",
+                  "To": "somebody@example.com"
+                },
+                "host": {
+                  "connection": {
+                    "name": "@parameters('$connections')['office365']['connectionId']"
+                  }
+                },
+                "method": "post",
+                "path": "/Mail"
+              },
+              "runAfter": {
+                "Parse_JSON": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ApiConnection"
+            },
+            "Enter_Batch_Size_(Optional)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "Batch Size",
+                    "type": "String",
+                    "value": "10"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_Tags_to_Check_(Optional)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "Enter_Resource_Group_Name_(Optional)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "resourceGroupName",
+                    "type": "String",
+                    "value": "[resourceGroup().name]"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_SubscriptionId_(Required)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "Enter_SubscriptionId_(Required)": {
+              "description": "Subscription Id of the subscription you want to manage",
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "subscriptionId",
+                    "type": "String",
+                    "value": "[subscription().subscriptionId]"
+                  }
+                ]
+              },
+              "runAfter": {},
+              "type": "InitializeVariable"
+            },
+            "Enter_Tags_to_Check_(Optional)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "Tags To Check",
+                    "type": "String",
+                    "value": ""
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_Resource_Group_Name_(Optional)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "Function_Body_(Do_not_edit)": {
+              "inputs": {
+                "variables": [
+                  {
+                    "name": "Function Body",
+                    "type": "String",
+                    "value": "{\"mode\":\"stop\", \"subscriptionId\":\"@{variables('subscriptionId')}\",\"batchsize\":\"@{variables('Batch Size')}\"}"
+                  }
+                ]
+              },
+              "runAfter": {
+                "Enter_Batch_Size_(Optional)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "InitializeVariable"
+            },
+            "ResourceGroup_condition": {
+              "actions": {},
+              "else": {
+                "actions": {
+                  "Condition_3": {
+                    "actions": {
+                      "Set_variable_3": {
+                        "inputs": {
+                          "name": "Function Body",
+                          "value": "{\"mode\":\"stop\", \"subscriptionId\":\"@{variables('subscriptionId')}\", \"resourceGroupName\":\"@{variables('resourceGroupName')}\", \"batchsize\":\"@{variables('Batch Size')}\"}"
+                        },
+                        "runAfter": {},
+                        "type": "SetVariable"
+                      }
+                    },
+                    "else": {
+                      "actions": {
+                        "Set_variable_4": {
+                          "inputs": {
+                            "name": "Function Body",
+                            "value": "{\"mode\":\"stop\", \"subscriptionId\":\"@{variables('subscriptionId')}\", \"resourceGroupName\":\"@{variables('resourceGroupName')}\", \"tag\":\"@{variables('Tags To Check')}\", \"batchsize\":\"@{variables('Batch Size')}\"}"
+                          },
+                          "runAfter": {},
+                          "type": "SetVariable"
+                        }
+                      }
+                    },
+                    "expression": {
+                      "and": [
+                        {
+                          "equals": [
+                            "@variables('Tags To Check')",
+                            ""
+                          ]
+                        }
+                      ]
+                    },
+                    "runAfter": {},
+                    "type": "If"
+                  }
+                }
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@variables('resourceGroupName')",
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "Function_Body_(Do_not_edit)": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If"
+            },
+            "StartStopVMs": {
+              "inputs": {
+                "body": "@variables('Function Body')",
+                "function": {
+                  "id": "[resourceId('Microsoft.Web/sites/functions', variables('functionAppName'),variables('functionName'))]"
+                }
+              },
+              "runAfter": {
+                "Tags_Condition": [
+                  "Succeeded"
+                ]
+              },
+              "type": "Function"
+            },
+            "Parse_JSON": {
+              "inputs": {
+                "content": "@body('StartStopVMs')",
+                "schema": {
+                  "properties": {
+                    "createdTime": {
+                      "type": "string"
+                    },
+                    "customStatus": {},
+                    "input": {
+                      "type": "string"
+                    },
+                    "instanceId": {
+                      "type": "string"
+                    },
+                    "lastUpdatedTime": {
+                      "type": "string"
+                    },
+                    "output": {
+                      "type": "string"
+                    },
+                    "runtimeStatus": {
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "runAfter": {
+                "StartStopVMs": [
+                  "Succeeded"
+                ]
+              },
+              "type": "ParseJson"
+            },
+            "Tags_Condition": {
+              "actions": {},
+              "else": {
+                "actions": {
+                  "Condition_4": {
+                    "actions": {
+                      "Set_variable": {
+                        "inputs": {
+                          "name": "Function Body",
+                          "value": "{\"mode\":\"stop\", \"subscriptionId\":\"@{variables('subscriptionId')}\", \"tag\":\"@{variables('Tags To Check')}\", \"batchsize\":\"@{variables('Batch Size')}\"}"
+                        },
+                        "runAfter": {},
+                        "type": "SetVariable"
+                      }
+                    },
+                    "expression": {
+                      "and": [
+                        {
+                          "equals": [
+                            "@variables('resourceGroupName')",
+                            ""
+                          ]
+                        }
+                      ]
+                    },
+                    "runAfter": {},
+                    "type": "If"
+                  }
+                }
+              },
+              "expression": {
+                "and": [
+                  {
+                    "equals": [
+                      "@variables('Tags To Check')",
+                      ""
+                    ]
+                  }
+                ]
+              },
+              "runAfter": {
+                "ResourceGroup_condition": [
+                  "Succeeded"
+                ]
+              },
+              "type": "If"
+            }
+          },
+          "contentVersion": "1.0.0.0",
+          "outputs": {},
+          "parameters": {
+            "$connections": {
+              "defaultValue": {},
+              "type": "Object"
+            }
+          },
+          "triggers": {
+            "Schedule_of_when_you_want_the_VM's_to_be_stopped_(Required)": {
+              "recurrence": {
+                "frequency": "Day",
+                "interval": 1,
+                "schedule": {
+                  "hours": [
+                    "19"
+                  ],
+                  "minutes": [
+                    0
+                  ]
+                },
+                "startTime": "2018-12-04T15:00:00",
+                "timeZone": "Pacific Standard Time"
+              },
+              "type": "Recurrence"
+            }
+          }
+        },
+        "parameters": {
+          "$connections": {
+            "value": {
+              "office365": {
+                "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/', 'office365')]",
+                "connectionId": "[resourceId('Microsoft.Web/connections', variables('office365ConnectionName'))]",
+                "connectionName": "[variables('office365ConnectionName')]"
+              }
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/sites/sourcecontrols', variables('functionAppName'), 'web')]",
+        "[resourceId('Microsoft.Logic/workflows', variables('startVMslogicAppName'))]",
+        "[resourceId('Microsoft.Web/connections', variables('office365ConnectionName'))]"
+      ]
+    },
+    {
+      "type": "MICROSOFT.WEB/CONNECTIONS",
+      "apiVersion": "2016-06-01",
+      "name": "[variables('office365ConnectionName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "api": {
+          "id": "[concat(subscription().id, '/providers/Microsoft.Web/locations/', resourceGroup().location, '/managedApis/', 'office365')]"
+        },
+        "displayName": "Office 365"
+      }
+    }
+  ],
+  "variables": {
+    "functionAppName": "[parameters('appName')]",
+    "functionName": "StartStopVMs",
+    "hostingPlanName": "[concat(parameters('appName'), '-plan')]",
+    "repoURL": "https://github.com/anirudhgarg/functions-logicapps-startstopvms-bytes.git",
+    "branch": "master",
+    "storageAccountName": "[concat('storage', uniquestring(resourceGroup().id))]",
+    "storageAccountid": "[concat(resourceGroup().id,'/providers/','Microsoft.Storage/storageAccounts/', variables('storageAccountName'))]",
+    "startVMslogicAppName": "[concat(parameters('appName'), '-StartVMs')]",
+    "stopVMslogicAppName": "[concat(parameters('appName'), '-StopVMs')]",
+    "office365ConnectionName": "[concat(parameters('appName'), '-Connection')]"
+  }
+}
+
+ 
